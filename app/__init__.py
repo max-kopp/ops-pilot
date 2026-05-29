@@ -1,0 +1,2 @@
+"""OpsPilot AI Streamlit application."""
+
