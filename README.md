@@ -2,7 +2,7 @@
 
 OpsPilot AI is a compact proof-of-concept for an AI-powered operational analytics assistant for logistics branch management.
 
-The app combines SQLite-based structured retrieval, KPI trend analysis, lightweight anomaly detection, and an LLM-powered chat interface using LangChain and RAG.
+The app combines SQLite-based structured retrieval, KPI trend analysis, lightweight anomaly detection, and an LLM-powered chat interface using LangChain prompts, LCEL chains, and RAG.
 
 ## What It Does
 
@@ -44,7 +44,7 @@ Streamlit dashboard       LLM management summary
 Manual RAG orchestrator -> SQL retrieval -> grounded chatbot prompt -> LLM answer
 ```
 
-The project intentionally avoids heavy agent frameworks. Intent detection is implemented with simple Python rules, then mapped to SQL retrieval functions for KPI rows, delay reasons, staffing events, customer feedback, and shipment cost samples.
+The project intentionally avoids heavy agent frameworks. Intent detection is implemented with simple Python rules, then mapped to SQL retrieval functions for KPI rows, delay reasons, staffing events, customer feedback, and shipment cost samples. Retrieval queries are structured using a Pydantic `RetrievalQuery` model for validated, typed input handling.
 
 ## Database Tables
 
