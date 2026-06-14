@@ -3,4 +3,5 @@ pandas
 streamlit
 langchain
 langchain-openai
+pydantic
 tabulate
