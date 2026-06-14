@@ -21,9 +21,7 @@ analysis/             KPI trend analysis, anomaly detection, retrieval orchestra
 data/                 Synthetic demo data generation
 database/             SQLite connection and setup scripts
 llm/                  LLM client and prompt wrappers
-ui/                   Reserved for reusable UI components
 requirements.txt      Python dependencies
-call_llm.py           Minimal model smoke test provided during setup
 ```
 
 ## Architecture
@@ -74,7 +72,7 @@ Create or activate your virtual environment, then install dependencies:
 pip install -r requirements.txt
 ```
 
-Add your OpenAI API credentials to `.env`. The app uses the same inexpensive model as `call_llm.py`:
+Add your OpenAI API credentials to `.env`. The app uses the same inexpensive model:
 
 ```text
 OPENAI_API_KEY=your_key_here
@@ -112,6 +110,7 @@ streamlit run app/main.py
 This keeps the assistant grounded in data while still allowing natural language follow-up analysis.
 
 ## Screenshots
+
 Overview with branch selection on the left:
 ![overview](/screenshots/OpsPilotOverview.png)
 
