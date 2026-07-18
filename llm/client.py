@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from collections.abc import Iterable
 from typing import Any
 
 from dotenv import find_dotenv, load_dotenv
 from langchain.chat_models import init_chat_model
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
 
 from analysis.kpi_analysis import Finding
@@ -41,6 +43,7 @@ QUESTION_ANSWER_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             "You are OpsPilot AI, a grounded conversational analytics assistant.",
         ),
+        MessagesPlaceholder(variable_name="chat_history"),
         (
             "human",
             """Answer the user's question using ONLY the retrieved SQLite records and KPI findings below.
@@ -71,6 +74,7 @@ question_answer_formatter = RunnableLambda(
     lambda inputs: {
         "question": inputs["question"],
         "context": context_to_text(inputs["retrieved_context"]),
+        "chat_history": format_chat_history(inputs.get("chat_history", [])),
     }
 ).with_config(run_name="format_retrieved_context", tags=["opspilot", "formatting"])
 
@@ -111,8 +115,39 @@ def generate_management_summary(findings: list[Finding]) -> str:
 def answer_question(question: str, retrieved_context: dict[str, Any]) -> str:
     return _invoke_chain(
         get_question_answer_chain(),
-        {"question": question, "retrieved_context": retrieved_context},
+        {"question": question, "retrieved_context": retrieved_context, "chat_history": []},
     )
+
+
+def stream_answer_question(
+    question: str,
+    retrieved_context: dict[str, Any],
+    chat_history: Iterable[dict[str, str]] | None = None,
+):
+    try:
+        yield from get_question_answer_chain().stream(
+            {
+                "question": question,
+                "retrieved_context": retrieved_context,
+                "chat_history": chat_history or [],
+            }
+        )
+    except Exception as exc:
+        yield _llm_error_message(exc)
+
+
+def format_chat_history(messages: Iterable[dict[str, str]]) -> list[BaseMessage]:
+    chat_history: list[BaseMessage] = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content")
+        if not content:
+            continue
+        if role == "user":
+            chat_history.append(HumanMessage(content=content))
+        elif role == "assistant":
+            chat_history.append(AIMessage(content=content))
+    return chat_history
 
 
 def _format_findings(findings: list[Finding]) -> str:
@@ -126,7 +161,11 @@ def _invoke_chain(chain, inputs: Any) -> str:
     try:
         return chain.invoke(inputs)
     except Exception as exc:
-        return (
-            "LLM response unavailable. The app still retrieved structured context from SQLite, "
-            f"but the model call failed with: {exc}"
-        )
+        return _llm_error_message(exc)
+
+
+def _llm_error_message(exc: Exception) -> str:
+    return (
+        "LLM response unavailable. The app still retrieved structured context from SQLite, "
+        f"but the model call failed with: {exc}"
+    )

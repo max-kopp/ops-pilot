@@ -14,7 +14,7 @@ from analysis.kpi_analysis import analyze_kpis, findings_to_frame, latest_branch
 from analysis.retrieval import retrieve_context
 from database.connection import DEFAULT_DB_PATH, get_connection
 from database.setup_database import create_database
-from llm.client import MODEL_NAME, answer_question, generate_management_summary
+from llm.client import MODEL_NAME, generate_management_summary, stream_answer_question
 
 
 st.set_page_config(page_title="OpsPilot AI", page_icon=":bar_chart:", layout="wide")
@@ -146,12 +146,11 @@ def render_chatbot(findings) -> None:
     )
 
     if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {
-                "role": "assistant",
-                "content": "Ask me about branch risks, KPI trends, cost drivers, or likely root causes. I will ground answers in SQLite records and analysis findings.",
-            }
-        ]
+        st.session_state.messages = initial_chat_messages()
+
+    if st.button("Clear conversation"):
+        st.session_state.messages = initial_chat_messages()
+        st.rerun()
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
@@ -159,21 +158,30 @@ def render_chatbot(findings) -> None:
 
     question = st.chat_input("Ask a follow-up question")
     if question:
+        chat_history = st.session_state.messages.copy()
         st.session_state.messages.append({"role": "user", "content": question})
         with st.chat_message("user"):
             st.write(question)
 
         with st.chat_message("assistant"):
-            with st.spinner("Retrieving structured context and asking the model..."):
+            with st.spinner("Retrieving structured context..."):
                 with get_connection(DEFAULT_DB_PATH) as conn:
                     context = retrieve_context(conn, question, findings)
-                answer = answer_question(question, context)
-                st.write(answer)
-                with st.expander("Retrieved context"):
-                    from analysis.retrieval import context_to_text
+            answer = st.write_stream(stream_answer_question(question, context, chat_history))
+            with st.expander("Retrieved context"):
+                from analysis.retrieval import context_to_text
 
-                    st.code(context_to_text(context), language="text")
+                st.code(context_to_text(context), language="text")
         st.session_state.messages.append({"role": "assistant", "content": answer})
+
+
+def initial_chat_messages() -> list[dict[str, str]]:
+    return [
+        {
+            "role": "assistant",
+            "content": "Ask me about branch risks, KPI trends, cost drivers, or likely root causes. I will ground answers in SQLite records and analysis findings.",
+        }
+    ]
 
 
 if __name__ == "__main__":

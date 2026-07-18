@@ -7,3 +7,6 @@ __pycache__/
 .streamlit/
 database/*.db
 CLAUDE.md
+local_mcp_sqlite_server.py
+.claude/
+.mcp.json
