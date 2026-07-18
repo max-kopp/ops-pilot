@@ -158,7 +158,7 @@ def render_chatbot(findings) -> None:
 
     question = st.chat_input("Ask a follow-up question")
     if question:
-        chat_history = st.session_state.messages.copy()
+        chat_history = __import__("typing").cast(list[dict[str, str]], st.session_state.messages).copy()
         st.session_state.messages.append({"role": "user", "content": question})
         with st.chat_message("user"):
             st.write(question)
@@ -168,11 +168,12 @@ def render_chatbot(findings) -> None:
                 with get_connection(DEFAULT_DB_PATH) as conn:
                     context = retrieve_context(conn, question, findings)
             answer = st.write_stream(stream_answer_question(question, context, chat_history))
+            answer_text = " ".join(answer) if isinstance(answer, list) else str(answer)
             with st.expander("Retrieved context"):
                 from analysis.retrieval import context_to_text
 
                 st.code(context_to_text(context), language="text")
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+        st.session_state.messages.append({"role": "assistant", "content": answer_text})
 
 
 def initial_chat_messages() -> list[dict[str, str]]:

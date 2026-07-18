@@ -27,7 +27,7 @@ Intent = Literal[
     "similar_developments",
     "cost_drivers",
     "customer_satisfaction_drivers",
-]
+] | str
 ComparisonMode = Literal["latest", "trend", "root_cause", "similar_branches", "drivers", "critical", "general"]
 KpiName = Literal[
     "service_level",
@@ -142,7 +142,8 @@ def build_retrieval_query(conn, question: str) -> tuple[RetrievalQuery, str | No
 
 def extract_retrieval_query(question: str) -> RetrievalQuery:
     """Use an LLM structured-output call to parse the user's retrieval request."""
-    return get_retrieval_query_chain().invoke({"question": question})
+    extracted = get_retrieval_query_chain().invoke({"question": question})
+    return RetrievalQuery.model_validate(extracted)
 
 
 @lru_cache(maxsize=1)
@@ -221,7 +222,7 @@ def _query_for_branches(conn, table: str, branches: list[str], query: RetrievalQ
         LIMIT 80
         """,
         conn,
-        params=[*branches, *month_params],
+        params=tuple([*branches, *month_params]),
     )
 
 
@@ -237,7 +238,7 @@ def _latest_or_monthly_kpis(conn, query: RetrievalQuery) -> pd.DataFrame:
             LIMIT 80
             """,
             conn,
-            params=month_params,
+            params=tuple(month_params),
         )
 
     return pd.read_sql_query(
@@ -260,7 +261,7 @@ def _shipment_cost_context(conn, branches: list[str], query: RetrievalQuery) -> 
     if branches:
         placeholders = ",".join("?" for _ in branches)
         where = f"WHERE branch_name IN ({placeholders})"
-        params = branches
+        params = tuple(branches)
         month_prefix = "AND"
     else:
         where = ""

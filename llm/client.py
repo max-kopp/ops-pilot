@@ -66,15 +66,18 @@ Retrieved context:
 )
 
 
+def _format_findings_input(findings: list[Finding]) -> dict[str, str]:
+    return {"findings_text": _format_findings(findings)}
+
 management_summary_formatter = RunnableLambda(
-    lambda findings: {"findings_text": _format_findings(findings)}
+    _format_findings_input
 ).with_config(run_name="format_management_findings", tags=["opspilot", "formatting"])
 
 question_answer_formatter = RunnableLambda(
     lambda inputs: {
-        "question": inputs["question"],
-        "context": context_to_text(inputs["retrieved_context"]),
-        "chat_history": format_chat_history(inputs.get("chat_history", [])),
+        "question": inputs.get("question") if isinstance(inputs, dict) else None,
+        "context": context_to_text(inputs.get("retrieved_context", {}) if isinstance(inputs, dict) else {}),
+        "chat_history": format_chat_history(inputs.get("chat_history", [])) if isinstance(inputs, dict) else [],
     }
 ).with_config(run_name="format_retrieved_context", tags=["opspilot", "formatting"])
 
