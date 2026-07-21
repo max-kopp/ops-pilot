@@ -11,6 +11,7 @@ The app combines SQLite-based structured retrieval, KPI trend analysis, lightwei
 - Detects meaningful KPI developments such as service deterioration, cost spikes, staffing pressure, and complaint increases
 - Produces an executive management summary
 - Lets users ask grounded follow-up questions in a Streamlit chatbot
+- Persists timestamped, titled conversations in `database/conversations.db`, with newest-first history and deletion controls
 - Retrieves relevant SQLite records before answering, so factual claims come from data rather than model memory
 
 ## Project Structure
@@ -56,6 +57,10 @@ Detail tables:
 - `delay_reasons`
 - `staffing_events`
 - `customer_feedback`
+
+Chat history is stored separately in `database/conversations.db` using `conversations` and
+`conversation_messages` tables. This database is created automatically and is not rebuilt
+with the KPI demo database.
 
 The demo data includes branch-specific patterns:
 

@@ -66,6 +66,18 @@ Retrieved context:
 )
 
 
+CONVERSATION_TITLE_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "Create a concise, specific title of 3 to 7 words for this analytics conversation. "
+            "Capture its main subject and branch when relevant. Return only the title, without quotes or a period.",
+        ),
+        ("human", "Conversation:\n{conversation_text}"),
+    ]
+)
+
+
 def _format_findings_input(findings: list[Finding]) -> dict[str, str]:
     return {"findings_text": _format_findings(findings)}
 
@@ -108,11 +120,36 @@ def get_question_answer_chain():
     ).with_config(run_name="question_answer_chain", tags=["opspilot", "rag", "chat"])
 
 
+@lru_cache(maxsize=1)
+def get_conversation_title_chain():
+    return (
+        CONVERSATION_TITLE_PROMPT
+        | get_chat_model()
+        | StrOutputParser()
+    ).with_config(run_name="conversation_title_chain", tags=["opspilot", "chat", "title"])
+
+
 def generate_management_summary(findings: list[Finding]) -> str:
     if not findings:
         return "No material KPI anomalies were detected in the current demo data."
 
     return _invoke_chain(get_management_summary_chain(), findings)
+
+
+def generate_conversation_title(messages: Iterable[dict[str, str]]) -> str | None:
+    visible_messages = [
+        f"{message.get('role', 'unknown').title()}: {str(message.get('content', '')).strip()[:600]}"
+        for message in messages
+        if message.get("role") in {"user", "assistant"} and str(message.get("content", "")).strip()
+    ]
+    if not any(line.startswith("User:") for line in visible_messages):
+        return None
+    try:
+        return get_conversation_title_chain().invoke(
+            {"conversation_text": "\n".join(visible_messages[-10:])}
+        )
+    except Exception:
+        return None
 
 
 def answer_question(question: str, retrieved_context: dict[str, Any]) -> str:

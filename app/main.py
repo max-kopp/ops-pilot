@@ -12,10 +12,25 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from analysis.kpi_analysis import analyze_kpis, findings_to_frame, latest_branch_snapshot, load_monthly_kpis
-from analysis.retrieval import retrieve_context
+from analysis.retrieval import context_to_text, retrieve_context
+from app.conversation_history import (
+    ChatMessage,
+    Conversation,
+    conversation_label,
+    create_conversation,
+    has_user_message,
+    set_generated_title,
+    sorted_conversations,
+    update_conversation,
+)
 from database.connection import DEFAULT_DB_PATH, get_connection
+from database.conversation_store import (
+    delete_conversation as delete_stored_conversation,
+    load_conversations,
+    save_conversation,
+)
 from database.setup_database import create_database
-from llm.client import MODEL_NAME, generate_management_summary, stream_answer_question
+from llm.client import MODEL_NAME, generate_conversation_title, generate_management_summary, stream_answer_question
 
 
 st.set_page_config(page_title="OpsPilot AI", page_icon=":bar_chart:", layout="wide")
@@ -326,21 +341,52 @@ def render_chatbot(findings) -> None:
         "Which branches are currently critical? What drives transportation costs in Munich?"
     )
 
-    if "messages" not in st.session_state:
-        st.session_state.messages = initial_chat_messages()
+    initialize_conversation_history()
 
-    if st.button("Clear conversation"):
-        st.session_state.messages = initial_chat_messages()
-        st.rerun()
+    st.caption("Conversation history")
+    control_col, action_col = st.columns([3, 1])
+    with control_col:
+        conversations = sorted_conversations(list(st.session_state.conversations.values()))
+        active_conversation = st.session_state.conversations[st.session_state.active_conversation_id]
+        with st.popover(conversation_label(active_conversation), use_container_width=True):
+            for conversation in conversations:
+                is_active = conversation["id"] == st.session_state.active_conversation_id
+                label = f"{'✓ ' if is_active else ''}{conversation_label(conversation)}"
+                conversation_col, delete_col = st.columns([7, 1])
+                with conversation_col:
+                    if st.button(
+                        label,
+                        key=f"open_conversation_{conversation['id']}",
+                        use_container_width=True,
+                        disabled=is_active,
+                    ):
+                        select_conversation(conversation["id"])
+                        st.rerun()
+                with delete_col:
+                    if st.button(
+                        "🗑",
+                        key=f"delete_conversation_{conversation['id']}",
+                        help=f"Delete {conversation['title']}",
+                    ):
+                        delete_conversation(conversation["id"])
+                        st.rerun()
+    with action_col:
+        if st.button("＋  Start new conversation", use_container_width=True):
+            start_new_conversation()
+            st.rerun()
 
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.write(message["content"])
+            if message.get("context"):
+                with st.expander("Retrieved context"):
+                    st.code(message["context"], language="text")
 
     question = st.chat_input("Ask a follow-up question")
     if question:
         chat_history = __import__("typing").cast(list[dict[str, str]], st.session_state.messages).copy()
         st.session_state.messages.append({"role": "user", "content": question})
+        save_active_conversation()
         with st.chat_message("user"):
             st.write(question)
 
@@ -350,14 +396,115 @@ def render_chatbot(findings) -> None:
                     context = retrieve_context(conn, question, findings, chat_history)
             answer = st.write_stream(stream_answer_question(question, context, chat_history))
             answer_text = " ".join(answer) if isinstance(answer, list) else str(answer)
+            retrieved_context_text = context_to_text(context)
             with st.expander("Retrieved context"):
-                from analysis.retrieval import context_to_text
+                st.code(retrieved_context_text, language="text")
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer_text,
+                "context": retrieved_context_text,
+            }
+        )
+        save_active_conversation()
+        if maybe_generate_conversation_title():
+            st.rerun()
 
-                st.code(context_to_text(context), language="text")
-        st.session_state.messages.append({"role": "assistant", "content": answer_text})
+
+def initialize_conversation_history() -> None:
+    if st.session_state.get("conversation_database_loaded", False):
+        return
+
+    stored_conversations = load_conversations()
+    if stored_conversations:
+        st.session_state.conversations = {
+            conversation["id"]: conversation for conversation in stored_conversations
+        }
+        active_conversation = stored_conversations[0]
+    elif st.session_state.get("conversations"):
+        existing_conversations = list(st.session_state.conversations.values())
+        for conversation in existing_conversations:
+            save_conversation(conversation)
+        active_id = st.session_state.get("active_conversation_id")
+        active_conversation = st.session_state.conversations.get(active_id, existing_conversations[0])
+    else:
+        messages = st.session_state.get("messages", initial_chat_messages())
+        active_conversation = create_conversation(messages)
+        st.session_state.conversations = {active_conversation["id"]: active_conversation}
+        save_conversation(active_conversation)
+
+    st.session_state.active_conversation_id = active_conversation["id"]
+    st.session_state.messages = [message.copy() for message in active_conversation["messages"]]
+    st.session_state.conversation_database_loaded = True
 
 
-def initial_chat_messages() -> list[dict[str, str]]:
+def save_active_conversation() -> None:
+    conversation_id = st.session_state.active_conversation_id
+    conversation = st.session_state.conversations[conversation_id]
+    updated = update_conversation(conversation, st.session_state.messages)
+    st.session_state.conversations[conversation_id] = updated
+    save_conversation(updated)
+
+
+def select_conversation(conversation_id: str) -> None:
+    conversation: Conversation | None = st.session_state.conversations.get(conversation_id)
+    if conversation is None:
+        return
+    st.session_state.active_conversation_id = conversation_id
+    st.session_state.messages = [message.copy() for message in conversation["messages"]]
+
+
+def start_new_conversation() -> None:
+    active_id = st.session_state.active_conversation_id
+    active_conversation = st.session_state.conversations[active_id]
+    new_conversation = create_conversation(initial_chat_messages())
+
+    # Reuse an untouched blank conversation so repeated clicks do not clutter history.
+    if not has_user_message(active_conversation):
+        del st.session_state.conversations[active_id]
+        delete_stored_conversation(active_id)
+
+    st.session_state.conversations[new_conversation["id"]] = new_conversation
+    save_conversation(new_conversation)
+    st.session_state.active_conversation_id = new_conversation["id"]
+    st.session_state.messages = [message.copy() for message in new_conversation["messages"]]
+
+
+def maybe_generate_conversation_title() -> bool:
+    conversation_id = st.session_state.active_conversation_id
+    conversation = st.session_state.conversations[conversation_id]
+    if conversation.get("title_generated", False):
+        return False
+
+    with st.spinner("Naming conversation..."):
+        generated_title = generate_conversation_title(conversation["messages"])
+    titled_conversation = set_generated_title(
+        conversation,
+        generated_title or conversation["title"],
+    )
+    st.session_state.conversations[conversation_id] = titled_conversation
+    save_conversation(titled_conversation)
+    return titled_conversation["title"] != conversation["title"]
+
+
+def delete_conversation(conversation_id: str) -> None:
+    delete_stored_conversation(conversation_id)
+    st.session_state.conversations.pop(conversation_id, None)
+
+    if st.session_state.conversations:
+        remaining = sorted_conversations(list(st.session_state.conversations.values()))
+        next_conversation = remaining[0]
+    else:
+        next_conversation = create_conversation(initial_chat_messages())
+        st.session_state.conversations[next_conversation["id"]] = next_conversation
+        save_conversation(next_conversation)
+
+    if conversation_id == st.session_state.active_conversation_id:
+        st.session_state.active_conversation_id = next_conversation["id"]
+        st.session_state.messages = [message.copy() for message in next_conversation["messages"]]
+
+
+def initial_chat_messages() -> list[ChatMessage]:
     return [
         {
             "role": "assistant",
