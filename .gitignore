@@ -4,7 +4,8 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 database/*.db
 CLAUDE.md
 local_mcp_sqlite_server.py
