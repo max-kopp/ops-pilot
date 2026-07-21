@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import unittest
 
 from app.conversation_history import (
+    ChatMessage,
     conversation_label,
     conversation_title,
     create_conversation,
@@ -13,7 +14,7 @@ from app.conversation_history import (
 )
 
 
-WELCOME = [{"role": "assistant", "content": "How can I help?"}]
+WELCOME: list[ChatMessage] = [{"role": "assistant", "content": "How can I help?"}]
 
 
 class ConversationHistoryTests(unittest.TestCase):

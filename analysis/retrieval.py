@@ -527,7 +527,7 @@ def _is_elliptical_question(query: RetrievalQuery) -> bool:
     return len(words) <= 4 and (
         not query.branches
         or not query.kpis
-        or (words and words[0] in {"and", "also", "why"})
+        or (bool(words) and words[0] in {"and", "also", "why"})
     )
 
 

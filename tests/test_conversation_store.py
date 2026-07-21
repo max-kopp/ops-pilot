@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
 import unittest
+from typing import cast
 
 from app.conversation_history import create_conversation, set_generated_title, update_conversation
 from database.conversation_store import (
@@ -25,14 +26,14 @@ class ConversationStoreTests(unittest.TestCase):
 
     def test_save_and_load_conversation_with_messages(self) -> None:
         conversation = create_conversation(
-            [
+            cast(list, [
                 {"role": "user", "content": "What happened in Hamburg?"},
                 {
                     "role": "assistant",
                     "content": "Service levels declined.",
                     "context": "Intent: root_cause\nBranches: Hamburg",
                 },
-            ],
+            ]),
             conversation_id="conversation-1",
             modified_at=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc),
         )

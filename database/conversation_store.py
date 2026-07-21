@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 
 from app.conversation_history import Conversation
+from typing import cast
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -66,13 +67,16 @@ def load_conversations(
                 (row["id"],),
             ).fetchall()
             conversations.append(
-                {
-                    "id": row["id"],
-                    "title": row["title"],
-                    "title_generated": bool(row["title_generated"]),
-                    "updated_at": row["updated_at"],
-                    "messages": [_message_from_row(message) for message in message_rows],
-                }
+                cast(
+                    Conversation,
+                    {
+                        "id": row["id"],
+                        "title": row["title"],
+                        "title_generated": bool(row["title_generated"]),
+                        "updated_at": row["updated_at"],
+                        "messages": [_message_from_row(message) for message in message_rows],
+                    },
+                )
             )
     return conversations
 
