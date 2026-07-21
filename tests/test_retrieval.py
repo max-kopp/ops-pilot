@@ -24,10 +24,15 @@ class RetrievalQueryTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.temp_dir.cleanup()
 
-    def context_for(self, question: str, extracted_query: RetrievalQuery):
+    def context_for(
+        self,
+        question: str,
+        extracted_query: RetrievalQuery,
+        chat_history: list[dict[str, str]] | None = None,
+    ):
         with patch("analysis.retrieval.extract_retrieval_query", return_value=extracted_query):
             with sqlite3.connect(self.db_path) as conn:
-                return retrieve_context(conn, question, self.findings)
+                return retrieve_context(conn, question, self.findings, chat_history)
 
     def test_service_question_uses_extracted_branch_and_kpi(self) -> None:
         context = self.context_for(
@@ -132,6 +137,51 @@ class RetrievalQueryTests(unittest.TestCase):
         self.assertIn("query_parse_warning", context)
         self.assertEqual(context["branches"], ["Hamburg"])
         self.assertEqual(context["retrieval_query"]["kpis"], ["service_level"])
+
+    def test_follow_up_inherits_branch_and_kpi_for_retrieval(self) -> None:
+        history = [
+            {"role": "user", "content": "How did customer satisfaction evolve in Frankfurt?"},
+            {"role": "assistant", "content": "It fell during the disruption and then recovered."},
+        ]
+
+        context = self.context_for(
+            "Why was that the case?",
+            RetrievalQuery(
+                original_question="Why was that the case?",
+                intent="root_cause",
+                branches=[],
+                kpis=[],
+                comparison_mode="root_cause",
+            ),
+            history,
+        )
+
+        self.assertEqual(context["branches"], ["Frankfurt"])
+        self.assertEqual(context["retrieval_query"]["kpis"], ["customer_satisfaction"])
+        self.assertEqual(context["intent"], "customer_satisfaction_drivers")
+        self.assertIn("customer_satisfaction_trend", context)
+        self.assertFalse(context["feedback_summary"].empty)
+
+    def test_standalone_broad_question_does_not_inherit_previous_branch(self) -> None:
+        history = [
+            {"role": "user", "content": "How did customer satisfaction evolve in Frankfurt?"},
+            {"role": "assistant", "content": "It fell and then recovered."},
+        ]
+
+        context = self.context_for(
+            "Which branches are currently critical?",
+            RetrievalQuery(
+                original_question="Which branches are currently critical?",
+                intent="critical_branches",
+                branches=[],
+                kpis=[],
+                comparison_mode="critical",
+            ),
+            history,
+        )
+
+        self.assertNotEqual(context["branches"], ["Frankfurt"])
+        self.assertEqual(context["retrieval_query"]["kpis"], [])
 
 
 if __name__ == "__main__":

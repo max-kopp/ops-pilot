@@ -102,8 +102,8 @@ streamlit run app/main.py
 ## RAG Workflow
 
 1. The user asks a question in the chatbot.
-2. The app detects a lightweight intent such as `root_cause`, `cost_drivers`, or `critical_branches`.
-3. The retrieval layer identifies relevant branches and pulls structured records from SQLite.
+2. The app resolves conversational references from recent turns and detects an intent such as `root_cause`, `cost_drivers`, or `critical_branches`.
+3. The retrieval layer carries forward omitted branch, KPI, and time scope for follow-up questions, then pulls the relevant structured records from SQLite.
 4. KPI findings and SQL results are serialized into compact context. Customer satisfaction questions additionally retrieve feedback categories, sentiment counts, low-rating comments, and satisfaction KPI trends.
 5. The LLM receives strict instructions to answer only from retrieved context.
 

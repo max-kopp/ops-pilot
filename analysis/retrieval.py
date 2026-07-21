@@ -81,16 +81,30 @@ Use only these branch names: Hamburg, Munich, Berlin, Cologne, Frankfurt, Stuttg
 Use only these KPI names: service_level, transportation_costs, staffing_level, complaints, customer_satisfaction.
 Use only these intents: general_kpi_question, root_cause, critical_branches, similar_developments, cost_drivers, customer_satisfaction_drivers.
 Use months only when the user explicitly gives a month or range. Month format must be YYYY-MM.
-If a field is not explicit, leave lists empty and choose the closest intent/comparison mode.""",
+Resolve follow-up references such as "that", "it", "there", and "the same trend" from the conversation history.
+Carry forward the relevant branch, KPI, and time scope when the current question omits them. Current-turn details override history.
+If a field is neither explicit nor recoverable from history, leave lists empty and choose the closest intent/comparison mode.""",
         ),
-        ("human", "{question}"),
+        (
+            "human",
+            """Conversation history:
+{chat_history}
+
+Current user question:
+{question}""",
+        ),
     ]
 )
 
 
-def retrieve_context(conn, question: str, findings: list[Finding]) -> dict[str, Any]:
+def retrieve_context(
+    conn,
+    question: str,
+    findings: list[Finding],
+    chat_history: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
     """Structured RAG retrieval based on an extracted query object."""
-    retrieval_query, parse_warning = build_retrieval_query(conn, question)
+    retrieval_query, parse_warning = build_retrieval_query(conn, question, chat_history)
     intent = retrieval_query.intent
     branches = retrieval_query.branches
 
@@ -131,18 +145,33 @@ def retrieve_context(conn, question: str, findings: list[Finding]) -> dict[str, 
     return context
 
 
-def build_retrieval_query(conn, question: str) -> tuple[RetrievalQuery, str | None]:
+def build_retrieval_query(
+    conn,
+    question: str,
+    chat_history: list[dict[str, str]] | None = None,
+) -> tuple[RetrievalQuery, str | None]:
     """Extract, normalize, and validate a retrieval query with manual fallback."""
+    history = chat_history or []
     try:
-        extracted = extract_retrieval_query(question)
-        return _normalize_query(extracted, conn, question), None
+        extracted = extract_retrieval_query(question, history)
+        normalized = _normalize_query(extracted, conn, question)
+        return _inherit_history_scope(normalized, history), None
     except Exception as exc:
-        return _manual_retrieval_query(question), f"LLM query extraction failed; used manual fallback. Reason: {exc}"
+        fallback = _inherit_history_scope(_manual_retrieval_query(question), history)
+        return fallback, f"LLM query extraction failed; used manual fallback. Reason: {exc}"
 
 
-def extract_retrieval_query(question: str) -> RetrievalQuery:
+def extract_retrieval_query(
+    question: str,
+    chat_history: list[dict[str, str]] | None = None,
+) -> RetrievalQuery:
     """Use an LLM structured-output call to parse the user's retrieval request."""
-    extracted = get_retrieval_query_chain().invoke({"question": question})
+    extracted = get_retrieval_query_chain().invoke(
+        {
+            "question": question,
+            "chat_history": _history_to_text(chat_history or []),
+        }
+    )
     return RetrievalQuery.model_validate(extracted)
 
 
@@ -425,6 +454,91 @@ def _manual_retrieval_query(question: str) -> RetrievalQuery:
         months=months,
         comparison_mode=_detect_comparison_mode(question),
     )
+
+
+def _inherit_history_scope(
+    query: RetrievalQuery,
+    chat_history: list[dict[str, str]],
+) -> RetrievalQuery:
+    """Fill omitted retrieval fields from the most recent relevant user turns."""
+    if not chat_history or not (
+        _is_context_dependent_question(query.original_question)
+        or _is_elliptical_question(query)
+    ):
+        return query
+
+    historical_queries = [
+        _manual_retrieval_query(message["content"])
+        for message in reversed(chat_history)
+        if message.get("role") == "user" and message.get("content")
+    ]
+
+    inherited_branches = next((item.branches for item in historical_queries if item.branches), [])
+    inherited_kpis = next((item.kpis for item in historical_queries if item.kpis), [])
+    inherited_months = next((item.months for item in historical_queries if item.months), [])
+
+    branches = query.branches or inherited_branches
+    kpis = query.kpis or inherited_kpis
+    months = query.months
+    if not months and query.time_range is None:
+        months = inherited_months
+
+    intent = query.intent
+    comparison_mode = query.comparison_mode
+    if intent == "root_cause" and "customer_satisfaction" in kpis:
+        intent = "customer_satisfaction_drivers"
+        comparison_mode = "drivers"
+    elif intent == "root_cause" and "transportation_costs" in kpis:
+        intent = "cost_drivers"
+        comparison_mode = "drivers"
+    elif intent == "general_kpi_question" and _is_context_dependent_question(query.original_question):
+        previous_intent = next(
+            (item.intent for item in historical_queries if item.intent != "general_kpi_question"),
+            intent,
+        )
+        intent = previous_intent
+        comparison_mode = next(
+            (item.comparison_mode for item in historical_queries if item.intent == previous_intent),
+            comparison_mode,
+        )
+
+    return query.model_copy(
+        update={
+            "branches": _dedupe(branches),
+            "kpis": _dedupe(kpis),
+            "months": _dedupe(months),
+            "intent": intent,
+            "comparison_mode": comparison_mode,
+        }
+    )
+
+
+def _is_context_dependent_question(question: str) -> bool:
+    q = question.lower()
+    references = ["that", "it", "there", "this", "same", "those", "these", "what about"]
+    return any(re.search(rf"\b{re.escape(reference)}\b", q) for reference in references)
+
+
+def _is_elliptical_question(query: RetrievalQuery) -> bool:
+    """Recognize terse follow-ups such as "Why?" and "And Munich?"."""
+    if query.intent in {"critical_branches", "similar_developments"}:
+        return False
+    words = re.findall(r"[\w'-]+", query.original_question.lower())
+    return len(words) <= 4 and (
+        not query.branches
+        or not query.kpis
+        or (words and words[0] in {"and", "also", "why"})
+    )
+
+
+def _history_to_text(chat_history: list[dict[str, str]], limit: int = 8) -> str:
+    relevant = []
+    for message in chat_history[-limit:]:
+        role = message.get("role")
+        content = message.get("content")
+        if role in {"user", "assistant"} and content:
+            relevant.append(f"{role.title()}: {content}")
+    return "\n".join(relevant) if relevant else "No previous conversation."
 
 
 def _normalize_query(query: RetrievalQuery, conn, question: str) -> RetrievalQuery:
